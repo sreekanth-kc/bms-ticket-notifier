@@ -13,7 +13,7 @@ case "$1" in
       exit 0
     fi
     echo "🚀 Starting BMS Ticket Notifier in background (every 5 mins)..."
-    nohup uv run main.py --loop 5 > "$LOG_FILE" 2>&1 &
+    nohup env PYTHONUNBUFFERED=1 uv run main.py --loop 5 > "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     echo "✅ Running with PID $(cat "$PID_FILE"). Logs: tail -f $LOG_FILE"
     ;;
@@ -51,3 +51,4 @@ case "$1" in
     exit 1
     ;;
 esac
+
