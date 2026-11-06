@@ -17,8 +17,25 @@ from urllib.parse import urlparse
 import requests
 
 # ──────────────────────────────────────────────────────────────────────
-# CONFIGURATION — edit these or set via env vars
+# CONFIGURATION — edit these or set via env vars or .env file
 # ──────────────────────────────────────────────────────────────────────
+def _load_env_file(filepath=".env"):
+    """Optionally load simple KEY=VALUE pairs from a local .env file."""
+    if not os.path.exists(filepath):
+        return
+    with open(filepath, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip("'\"")
+            if k and k not in os.environ:
+                os.environ[k] = v
+
+_load_env_file()
+
 CONFIG = {
     "url": os.getenv(
         "BMS_URL",
