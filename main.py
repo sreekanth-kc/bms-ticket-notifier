@@ -9,9 +9,11 @@ Configure via environment variables or edit the CONFIG below.
 import os
 import re
 import sys
+import time
 import json
+import subprocess
 from html import escape
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 import requests
@@ -406,14 +408,36 @@ def _cat_status_label(status):
     return AVAIL_STATUS_MAP.get(status, ("UNKNOWN", ""))[0]
 
 
+def send_mac_notification(title, message):
+    """Trigger a native macOS banner notification with an alert sound."""
+    if sys.platform != "darwin":
+        return
+    try:
+        clean_title = title.replace('"', '\\"').replace("'", "")
+        clean_msg = message.replace('"', '\\"').replace("'", "")
+        apple_script = (
+            f'display notification "{clean_msg}" '
+            f'with title "{clean_title}" '
+            f'sound name "Glass"'
+        )
+        subprocess.run(
+            ["osascript", "-e", apple_script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
 def send_email(subject, changes, shows, movie_info):
-    api_key = RESEND_API_KEY.strip()
-    to = RESEND_TO_EMAIL.strip()
-    frm = RESEND_FROM_EMAIL.strip() or "onboarding@resend.dev"
+    api_key = os.getenv("RESEND_API_KEY", RESEND_API_KEY).strip()
+    to = os.getenv("RESEND_TO_EMAIL", RESEND_TO_EMAIL).strip()
+    frm = os.getenv("RESEND_FROM_EMAIL", RESEND_FROM_EMAIL).strip() or "onboarding@resend.dev"
 
     if not api_key or not to:
         print("  ⚠️  Skipping email — RESEND_API_KEY or RESEND_TO_EMAIL not set.")
-        return
+        return False
 
     now_str = datetime.now().strftime("%d %b %Y, %I:%M %p")
     movie_name = movie_info.get("name", "Movie")
@@ -530,37 +554,41 @@ def send_email(subject, changes, shows, movie_info):
         )
         if resp.status_code in (200, 201):
             print(f"  ✅ Email sent to {to}")
+            return True
         else:
             print(f"  ❌ Resend {resp.status_code}: {resp.text}")
-            sys.exit(1)
+            return False
     except requests.RequestException as e:
         print(f"  ❌ Email failed: {e}")
-        sys.exit(1)
+        return False
 
 
 # ──────────────────────────────────────────────────────────────────────
-# MAIN
+# CHECK RUNNER & MAIN
 # ──────────────────────────────────────────────────────────────────────
-def main():
+def run_check():
+    _load_env_file()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now_str}] BMS Ticket Checker — CI mode")
+    print(f"[{now_str}] BMS Ticket Checker")
 
-    # Parse config
-    parsed = parse_bms_url(CONFIG["url"])
+    url = os.getenv("BMS_URL", CONFIG["url"])
+    dates_cfg = os.getenv("BMS_DATES", CONFIG["dates"])
+    theatre_cfg = os.getenv("BMS_THEATRE", CONFIG["theatre"])
+    time_cfg = os.getenv("BMS_TIME", CONFIG["time_period"])
+
+    parsed = parse_bms_url(url)
     event_code = parsed["event_code"]
     region_slug = parsed["region_slug"]
     url_date = parsed.get("date_code", "")
 
     if not event_code or not region_slug:
         print("  ❌ Invalid BMS_URL. Could not extract event/region.")
-        sys.exit(1)
+        return False
 
-    region_code, region_slug_r, lat, lon, geohash = resolve_region(
-        region_slug
-    )
+    region_code, region_slug_r, lat, lon, geohash = resolve_region(region_slug)
 
     # Determine dates to check
-    raw_dates = CONFIG["dates"].strip()
+    raw_dates = dates_cfg.strip()
     if raw_dates:
         date_list = [d.strip() for d in raw_dates.split(",") if d.strip()]
     elif url_date:
@@ -568,8 +596,7 @@ def main():
     else:
         date_list = [""]
 
-    print(f"  Event: {event_code}  Region: {region_code}  "
-          f"Dates: {date_list}")
+    print(f"  Event: {event_code}  Region: {region_code}  Dates: {date_list}")
 
     # Fetch data for each date
     all_shows = []
@@ -577,8 +604,7 @@ def main():
     movie_info = {"name": "Unknown", "language": ""}
 
     for dc in date_list:
-        data = fetch_bms(event_code, dc, region_code,
-                         region_slug_r, lat, lon, geohash)
+        data = fetch_bms(event_code, dc, region_code, region_slug_r, lat, lon, geohash)
         if not data:
             print(f"  ⚠️  No data for date {dc or '(default)'}")
             continue
@@ -591,16 +617,16 @@ def main():
 
     if not all_shows:
         print("  ❌ No showtimes found.")
-        sys.exit(0)
+        return True
 
     print(f"  🎬 {movie_info['name']}  {movie_info['language']}")
 
     # Apply filters
     filtered = filter_shows(
         all_shows,
-        CONFIG["theatre"],
-        CONFIG["time_period"],
-        CONFIG["dates"],
+        theatre_cfg,
+        time_cfg,
+        dates_cfg,
     )
     print(f"  📊 {len(filtered)} showtime(s) after filters")
 
@@ -618,6 +644,16 @@ def main():
         print(f"\n  ⚡ {len(changes)} change(s) detected:")
         for c in changes:
             print(f"     {c}")
+
+        # Native macOS notification
+        summary = "; ".join(changes[:2])
+        if len(changes) > 2:
+            summary += f" (+{len(changes)-2} more)"
+        send_mac_notification(
+            f"BMS Alert: {movie_info['name']}",
+            summary,
+        )
+
         send_email(
             f"BMS Alert: {movie_info['name']} - {len(changes)} change(s)",
             changes, filtered, movie_info,
@@ -635,7 +671,49 @@ def main():
         fmt = f"|{s.screen_attr}" if s.screen_attr else ""
         print(f"    {s.venue_name} — {s.time}{fmt} [{s.date_code}] — {cats}")
 
-    print("\n  Done.")
+    print("\n  Check complete.")
+    return True
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="BMS Ticket Notifier")
+    parser.add_argument(
+        "--loop",
+        nargs="?",
+        const=5.0,
+        type=float,
+        default=None,
+        help="Run continuously in a loop every N minutes (default: 5 minutes)",
+    )
+    args = parser.parse_args()
+
+    loop_minutes = args.loop
+    if loop_minutes is None and os.getenv("BMS_LOOP_MINUTES"):
+        try:
+            loop_minutes = float(os.getenv("BMS_LOOP_MINUTES"))
+        except ValueError:
+            pass
+
+    if loop_minutes is None:
+        # Run once (CI / headless mode)
+        success = run_check()
+        sys.exit(0 if success else 1)
+
+    interval_sec = int(loop_minutes * 60)
+    print(f"🚀 Starting BMS Ticket Notifier loop (every {loop_minutes} min)...")
+    print("Press Ctrl+C to stop.\n")
+
+    while True:
+        try:
+            run_check()
+            next_time = (datetime.now() + timedelta(seconds=interval_sec)).strftime("%I:%M:%S %p")
+            print(f"\n⏳ Sleeping {loop_minutes} min... Next check at {next_time}\n" + "─" * 60)
+            time.sleep(interval_sec)
+        except KeyboardInterrupt:
+            print("\n👋 Monitoring stopped by user.")
+            break
 
 
 if __name__ == "__main__":
