@@ -682,10 +682,10 @@ def main():
     parser.add_argument(
         "--loop",
         nargs="?",
-        const=5.0,
+        const=1.0,
         type=float,
         default=None,
-        help="Run continuously in a loop every N minutes (default: 5 minutes)",
+        help="Run continuously in a loop every N minutes (default: 1 minute)",
     )
     args = parser.parse_args()
 

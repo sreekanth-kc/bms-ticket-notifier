@@ -12,8 +12,8 @@ case "$1" in
       echo "⚠️  BMS Notifier is already running (PID: $(cat "$PID_FILE"))."
       exit 0
     fi
-    echo "🚀 Starting BMS Ticket Notifier in background (every 5 mins)..."
-    nohup env PYTHONUNBUFFERED=1 uv run main.py --loop 5 > "$LOG_FILE" 2>&1 &
+    echo "🚀 Starting BMS Ticket Notifier in background (every 1 min)..."
+    nohup env PYTHONUNBUFFERED=1 uv run main.py --loop 1 > "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     echo "✅ Running with PID $(cat "$PID_FILE"). Logs: tail -f $LOG_FILE"
     ;;
