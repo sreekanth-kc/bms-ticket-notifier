@@ -292,7 +292,7 @@ def filter_shows(shows, theatre_filter, time_periods, date_codes):
     periods = [p.strip().lower() for p in time_periods.split(",")
                if p.strip()] if time_periods else []
     dates_set = set(d.strip() for d in date_codes.split(",")
-                    if d.strip()) if date_codes else set()
+                    if d.strip() and d.strip().lower() != "all") if date_codes else set()
 
     for s in shows:
         # Theatre filter
@@ -589,8 +589,17 @@ def run_check():
 
     # Determine dates to check
     raw_dates = dates_cfg.strip()
-    if raw_dates:
+    if raw_dates and raw_dates.lower() != "all":
         date_list = [d.strip() for d in raw_dates.split(",") if d.strip()]
+    elif raw_dates.lower() == "all" or not url_date:
+        initial_data = fetch_bms(event_code, "", region_code, region_slug_r, lat, lon, geohash)
+        if initial_data:
+            detected = parse_dates(initial_data)
+            date_list = [d.date_code for d in detected if d.status in ("AVAILABLE", "BOOKABLE")]
+            if not date_list:
+                date_list = [d.date_code for d in detected]
+        else:
+            date_list = [""]
     elif url_date:
         date_list = [url_date]
     else:
